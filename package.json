@@ -1,0 +1,29 @@
+{
+  "name": "slack-thread-analyzer",
+  "version": "1.0.0",
+  "description": "Slack Thread Analyzer for Cursor - 슬랙 스레드 논쟁 감지 및 분석",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.13.1",
+    "@slack/web-api": "^6.9.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.2",
+    "@google-ai/generativelanguage": "^2.1.0",
+    "@google/generative-ai": "^0.2.1",
+    "@notionhq/client": "^2.2.11",
+    "winston": "^3.10.0"
+  },
+  "optionalDependencies": {
+    "openai": "^4.11.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1"
+  }
+} 
