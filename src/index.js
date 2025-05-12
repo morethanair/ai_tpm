@@ -97,7 +97,46 @@ app.event('app_mention', async ({ event, say }) => {
 
 // 기본 메시지 핸들러 추가 (테스트용)
 app.message('.*', async ({ message, say }) => {
-  logger.info(`일반 메시지 수신: ${JSON.stringify(message)}`);
+  // 메시지의 모든 정보를 상세히 로깅
+  const messageDetails = {
+    type: message.type,
+    channel: message.channel,
+    user: message.user,
+    text: message.text,
+    ts: message.ts,
+    thread_ts: message.thread_ts,
+    subtype: message.subtype,
+    team: message.team,
+    blocks: message.blocks ? '있음' : '없음',
+    attachments: message.attachments ? message.attachments.length : 0,
+    time: new Date(Number(message.ts) * 1000).toLocaleString('ko-KR')
+  };
+
+  // 사용자 정보 조회 (가능한 경우)
+  try {
+    const userInfo = await app.client.users.info({ user: message.user });
+    if (userInfo.ok) {
+      messageDetails.userName = userInfo.user.profile.display_name || userInfo.user.profile.real_name || message.user;
+      messageDetails.isBot = userInfo.user.is_bot;
+    }
+  } catch (error) {
+    logger.warn(`사용자 정보 조회 실패: ${message.user}`);
+  }
+
+  // 채널 정보 조회 (가능한 경우)
+  try {
+    const channelInfo = await app.client.conversations.info({ channel: message.channel });
+    if (channelInfo.ok) {
+      messageDetails.channelName = channelInfo.channel.name;
+      messageDetails.isPrivate = channelInfo.channel.is_private;
+    }
+  } catch (error) {
+    logger.warn(`채널 정보 조회 실패: ${message.channel}`);
+  }
+
+  logger.info('📬 메시지 수신: ' + JSON.stringify(messageDetails, null, 2));
+  
+  // 이미 다른 핸들러가 처리하므로 응답은 생략
 });
 
 // 앱 시작

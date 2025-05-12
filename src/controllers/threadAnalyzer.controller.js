@@ -37,25 +37,64 @@ class ThreadAnalyzerController {
         clearTimeout(this.analysisTimeouts[threadKey]);
       }
 
-      // 30분 후 분석 예약
-      const waitMs = (config.threadAnalysis.waitMinutes || 30) * 60 * 1000;
-      this.analysisTimeouts[threadKey] = setTimeout(async () => {
-        // 이미 분석한 스레드는 무시
-        if (this.analyzedThreads.has(threadKey)) return;
+      // 스레드가 논쟁 상황인지 확인 (N개 이상의 답글이 있는지)
+      const isDebate = await slackService.isDebateThread(event);
+      
+      // 추가: 답글 수를 직접 확인하고 로그에 기록
+      const replies = await slackService.getThreadReplies(event.channel, event.thread_ts);
+      const replyCount = replies.length - 1; // 첫 메시지를 제외한 답글 수
+      const minReplies = config.threadAnalysis.minReplies;
+      
+      logger.info(`스레드 ${threadKey}의 현재 답글 수: ${replyCount}개 (분석 기준: ${minReplies}개 이상)`);
+      
+      if (replyCount >= minReplies) {
+        logger.info(`🔍 스레드 ${threadKey}에 답글이 ${replyCount}개로 분석 기준(${minReplies}개)을 충족했습니다!`);
+      }
+      
+      if (!isDebate) {
+        logger.info(`스레드 ${threadKey}는 분석 조건을 충족하지 않습니다.`);
+        return;
+      }
 
-        // 스레드가 논쟁 상황인지 확인 (N개 이상의 답글이 있는지)
-        const isDebate = await slackService.isDebateThread(event);
-        if (!isDebate) {
-          return;
-        }
+      // 이미 분석한 스레드는 무시
+      if (this.analyzedThreads.has(threadKey)) {
+        logger.info(`스레드 ${threadKey}는 이미 분석되었습니다.`);
+        return;
+      }
 
-        // 분석 실행
+      // 대기 시간 확인 (분 단위)
+      const waitMinutes = config.threadAnalysis.waitMinutes || 30;
+      const waitMs = waitMinutes * 60 * 1000;
+      
+      // 대기 시간이 0이면 즉시 분석, 아니면 설정된 시간 후 분석
+      if (waitMinutes <= 0) {
+        logger.info(`스레드 ${threadKey} 즉시 분석 시작 (대기 시간: ${waitMinutes}분)`);
         await this.analyzeThread(event.channel, event.thread_ts);
         this.analyzedThreads.add(threadKey);
-        // 예약 및 타임스탬프 정리
-        delete this.analysisTimeouts[threadKey];
-        delete this.threadLastMessageMap[threadKey];
-      }, waitMs); // configurable 대기시간
+      } else {
+        logger.info(`스레드 ${threadKey} 분석 예약됨 - ${waitMinutes}분 후 실행`);
+        
+        // 설정된 시간 후 분석 예약
+        this.analysisTimeouts[threadKey] = setTimeout(async () => {
+          // 분석 실행 직전에 다시 한번 조건 확인
+          const latestReplies = await slackService.getThreadReplies(event.channel, event.thread_ts);
+          const latestReplyCount = latestReplies.length - 1;
+          
+          logger.info(`예약된 분석 실행 전 스레드 ${threadKey}의 최종 답글 수: ${latestReplyCount}개`);
+          
+          if (latestReplyCount >= minReplies && !this.analyzedThreads.has(threadKey)) {
+            // 분석 실행
+            await this.analyzeThread(event.channel, event.thread_ts);
+            this.analyzedThreads.add(threadKey);
+          } else {
+            logger.info(`스레드 ${threadKey}는 분석 시점에 조건을 충족하지 않거나 이미 분석되었습니다.`);
+          }
+          
+          // 예약 및 타임스탬프 정리
+          delete this.analysisTimeouts[threadKey];
+          delete this.threadLastMessageMap[threadKey];
+        }, waitMs);
+      }
     } catch (error) {
       logger.error('이벤트 처리 중 오류 발생:', error);
     }
@@ -68,10 +107,13 @@ class ThreadAnalyzerController {
    */
   async analyzeThread(channelId, threadTs) {
     try {
-      logger.info(`스레드 분석 시작: ${channelId} ${threadTs}`);
+      const threadKey = `${channelId}-${threadTs}`;
+      logger.info(`스레드 분석 시작: ${threadKey}`);
 
       // 스레드 메시지 가져오기
       const messages = await slackService.getThreadReplies(channelId, threadTs);
+      logger.info(`분석할 스레드의 총 메시지 수: ${messages.length}개 (첫 메시지 포함)`);
+      
       // 사용자명 변환 (userName 필드 추가)
       for (const msg of messages) {
         msg.userName = await slackService.getUserName(msg.user);
@@ -87,7 +129,7 @@ class ThreadAnalyzerController {
         await notionService.saveAnalysisToNotion(analysis, channelId, threadTs, messages);
       }
       
-      logger.info(`스레드 분석 완료: ${channelId} ${threadTs}`);
+      logger.info(`스레드 분석 완료: ${threadKey}`);
     } catch (error) {
       logger.error(`스레드 분석 중 오류 발생: ${error.message}`, error);
     }

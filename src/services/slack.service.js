@@ -100,7 +100,8 @@ class SlackService {
     // 태그 포맷팅
     const tagsText = analysis.tags.map(tag => `#${tag}`).join(' ');
 
-    return [
+    // 기본 블록 생성
+    const blocks = [
       {
         "type": "header",
         "text": {
@@ -139,7 +140,17 @@ class SlackService {
           "type": "mrkdwn",
           "text": `*조치 필요 항목*\n${this._formatList(analysis.actionItems)}`
         }
-      },
+      }
+    ];
+
+    // 비효율적인 스레드 분석 결과가 있으면 추가
+    if (analysis.inefficiencyFactors && analysis.inefficiencyFactors.isInefficient) {
+      const inefficiencyBlocks = this._formatInefficiencyBlocks(analysis.inefficiencyFactors);
+      blocks.push(...inefficiencyBlocks);
+    }
+
+    // 마지막 정보 블록 추가
+    blocks.push(
       {
         "type": "divider"
       },
@@ -161,7 +172,72 @@ class SlackService {
           }
         ]
       }
+    );
+
+    return blocks;
+  }
+
+  /**
+   * 비효율적인 스레드 패턴 분석 결과를 Slack 블록 형식으로 포맷팅합니다
+   * @private
+   * @param {Object} inefficiencyFactors - 비효율적인 스레드 패턴 분석 결과
+   * @returns {Array} - Slack 블록 배열
+   */
+  _formatInefficiencyBlocks(inefficiencyFactors) {
+    const factorLabels = {
+      noOwner: "📌 명확한 책임자 부재",
+      prematureExecution: "🏃‍♂️ 결론 없이 실행 진행",
+      noDocumentation: "📄 문서화 미진행",
+      emotionalDecision: "😢 감정 기반 의사결정",
+      roleMixing: "🔄 역할 혼합",
+      noConclusion: "❓ 결론 부재",
+      duplicateMeetings: "🔁 중복 회의"
+    };
+
+    // 감지된 비효율적인 패턴을 모아서 표시할 텍스트 생성
+    const detectedFactors = Object.entries(inefficiencyFactors.factors)
+      .filter(([_, factor]) => factor.detected)
+      .map(([key, factor]) => {
+        return `*${factorLabels[key]}*\n${factor.evidence}`;
+      });
+
+    const blocks = [
+      {
+        "type": "divider"
+      },
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "⚠️ 비효율적인 스레드 패턴 감지",
+          "emoji": true
+        }
+      }
     ];
+
+    // 감지된 패턴이 있으면 추가
+    if (detectedFactors.length > 0) {
+      blocks.push({
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": detectedFactors.join('\n\n')
+        }
+      });
+    }
+
+    // 개선 권장사항 추가
+    if (inefficiencyFactors.recommendations && inefficiencyFactors.recommendations.length > 0) {
+      blocks.push({
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "*개선 권장사항*\n" + this._formatList(inefficiencyFactors.recommendations)
+        }
+      });
+    }
+
+    return blocks;
   }
 
   /**
