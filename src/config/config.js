@@ -25,5 +25,11 @@ module.exports = {
   threadAnalysis: {
     minReplies: parseInt(process.env.MIN_THREAD_REPLIES || '5', 10),
     waitMinutes: parseInt(process.env.MIN_THREAD_WAIT_MINUTES || '30', 10)
+  },
+  groupAnalysis: {
+    timeGapMinutes: parseInt(process.env.GROUP_TIME_GAP_MINUTES || '5', 10),
+    waitMinutes: parseInt(process.env.GROUP_WAIT_MINUTES || '5', 10),
+    immediateAnalysisGapMinutes: parseInt(process.env.GROUP_IMMEDIATE_GAP_MINUTES || '3', 10),
+    enableAutoAnalysis: process.env.ENABLE_GROUP_AUTO_ANALYSIS !== 'false'
   }
 }; 

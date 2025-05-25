@@ -31,11 +31,27 @@ class NotionService {
     }
 
     try {
+      logger.info('[Notion] 저장 시도', {
+        channelId,
+        threadTs,
+        analysisSummary: analysis.summary,
+        analysisType: analysis.analysisType,
+        messageCount: messages?.length,
+        notionDb: this.databaseId
+      });
+
       const threadUrl = this._getSlackThreadUrl(channelId, threadTs);
       const firstMessage = messages[0]?.text || '내용 없음';
       const truncatedFirstMessage = firstMessage.length > 100 
         ? `${firstMessage.substring(0, 97)}...` 
         : firstMessage;
+
+      // Sentiment 값 보정: undefined이거나 허용된 값이 아니면 '중립'으로 강제
+      const allowedSentiments = ['긍정', '부정', '중립'];
+      let sentiment = analysis.sentiment;
+      if (!allowedSentiments.includes(sentiment)) {
+        sentiment = '중립';
+      }
 
       const pageProperties = {
         title: {
@@ -47,6 +63,11 @@ class NotionService {
             }
           ]
         },
+        Sentiment: {
+          select: {
+            name: sentiment
+          }
+        },
         Summary: {
           rich_text: [
             {
@@ -56,15 +77,7 @@ class NotionService {
             }
           ]
         },
-        Sentiment: {
-          select: {
-            name: analysis.sentiment
-          }
-        },
-        ThreadLink: {
-          url: threadUrl
-        },
-        Channel: {
+        channelId: {
           rich_text: [
             {
               text: {
@@ -73,15 +86,26 @@ class NotionService {
             }
           ]
         },
-        Tags: {
-          multi_select: analysis.tags.map(tag => ({ name: tag }))
+        threadTs: {
+          rich_text: [
+            {
+              text: {
+                content: threadTs
+              }
+            }
+          ]
         },
-        Date: {
+        '날짜': {
           date: {
             start: new Date().toISOString()
           }
+        },
+        '참여자': {
+          multi_select: analysis.participants?.map(name => ({ name })) || []
         }
       };
+
+      logger.info('[Notion] pageProperties', pageProperties);
 
       const response = await this.client.pages.create({
         parent: {
@@ -91,10 +115,16 @@ class NotionService {
         children: this._createNotionContent(analysis, messages)
       });
 
-      logger.info(`Notion 페이지 생성 완료: ${response.id}`);
+      logger.info(`[Notion] 페이지 생성 완료: ${response.id}`);
       return response;
     } catch (error) {
-      logger.error(`Notion 페이지 생성 실패: ${error.message}`);
+      logger.error(`[Notion] 페이지 생성 실패: ${error.message}`, {
+        stack: error.stack,
+        analysis,
+        channelId,
+        threadTs,
+        messages
+      });
       throw new Error('Notion 페이지를 생성하는데 실패했습니다');
     }
   }

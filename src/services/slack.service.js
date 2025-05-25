@@ -196,6 +196,284 @@ class SlackService {
       return userId;
     }
   }
+
+  /**
+   * 그룹 분석 결과를 Slack 채널에 게시합니다
+   * @param {String} channelId - 채널 ID
+   * @param {Object} groupAnalysis - 그룹 분석 결과 객체
+   * @param {Object} options - 추가 옵션
+   * @returns {Object} - 게시 결과
+   */
+  async postGroupAnalysisToSlack(channelId, groupAnalysis, options = {}) {
+    try {
+      const { analysisType, actionRequired } = groupAnalysis;
+      
+      // 분석 타입에 따른 메시지 생성
+      let message;
+      let blocks;
+
+      switch (analysisType) {
+        case 'qa':
+          message = '📝 Q&A 정리';
+          blocks = this._formatQABlocks(groupAnalysis);
+          // Q&A 질문자/답변자 멘션 추가
+          if (groupAnalysis.qna && groupAnalysis.qna.length > 0) {
+            const qnaMentions = groupAnalysis.qna.map(q => `<@${q.questioner}> <@${q.answerer}>`).join(' ');
+            message = `${message}\n${qnaMentions}`;
+          }
+          break;
+        case 'decision_made':
+          message = '✅ 의사결정 완료';
+          blocks = this._formatDecisionMadeBlocks(groupAnalysis);
+          // 결정자 멘션 추가
+          if (groupAnalysis.decisions && groupAnalysis.decisions.length > 0) {
+            const decisionMentions = groupAnalysis.decisions.map(d => `<@${d.decisionMaker}>`).join(' ');
+            message = `${message}\n${decisionMentions}`;
+          }
+          break;
+        case 'decision_needed':
+          message = '⚠️ 의사결정 필요';
+          blocks = this._formatDecisionNeededBlocks(groupAnalysis);
+          // pendingDecisions 멘션 추가
+          if (groupAnalysis.pendingDecisions && groupAnalysis.pendingDecisions.length > 0) {
+            const pendingMentions = groupAnalysis.pendingDecisions.flatMap(p => p.suggestedDecisionMakers.map(u => `<@${u}>`)).join(' ');
+            message = `${message}\n${pendingMentions}`;
+          }
+          break;
+        default:
+          message = '📊 메시지 그룹 분석';
+          blocks = this._formatGeneralGroupBlocks(groupAnalysis);
+      }
+
+      // 의사결정이 필요한 경우 멘션 추가
+      if (actionRequired.needsResponse && actionRequired.targetUsers) {
+        const mentions = actionRequired.targetUsers.map(userId => `<@${userId}>`).join(' ');
+        message = `${message}\n${mentions} ${actionRequired.message}`;
+      }
+
+      const result = await this.client.chat.postMessage({
+        channel: channelId,
+        text: message,
+        blocks: blocks
+      });
+
+      logger.info(`그룹 분석 결과 게시 완료: ${result.ts} (타입: ${analysisType})`);
+      return result;
+    } catch (error) {
+      logger.error(`그룹 분석 결과 게시 실패: ${error.message}`);
+      throw new Error('그룹 분석 결과를 게시하는데 실패했습니다');
+    }
+  }
+
+  /**
+   * Q&A 분석 결과를 Slack 블록으로 포맷팅합니다
+   * @private
+   * @param {Object} analysis - 분석 결과 객체
+   * @returns {Array} - Slack 블록 배열
+   */
+  _formatQABlocks(analysis) {
+    const blocks = [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "📝 Q&A 정리",
+          "emoji": true
+        }
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `*요약*\n${analysis.summary}`
+        }
+      },
+      {
+        "type": "divider"
+      }
+    ];
+
+    // Q&A 항목들 추가
+    analysis.qna.forEach((qa, index) => {
+      blocks.push({
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `*Q${index + 1}.* ${qa.question}\n*A${index + 1}.* ${qa.answer}`
+        }
+      });
+      
+      blocks.push({
+        "type": "context",
+        "elements": [
+          {
+            "type": "mrkdwn",
+            "text": `질문자: <@${qa.questioner}> | 답변자: <@${qa.answerer}>`
+          }
+        ]
+      });
+    });
+
+    return blocks;
+  }
+
+  /**
+   * 의사결정 완료 분석 결과를 Slack 블록으로 포맷팅합니다
+   * @private
+   * @param {Object} analysis - 분석 결과 객체
+   * @returns {Array} - Slack 블록 배열
+   */
+  _formatDecisionMadeBlocks(analysis) {
+    const blocks = [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "✅ 의사결정 완료",
+          "emoji": true
+        }
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `*요약*\n${analysis.summary}`
+        }
+      },
+      {
+        "type": "divider"
+      }
+    ];
+
+    // 결정 사항들 추가
+    analysis.decisions.forEach((decision, index) => {
+      blocks.push({
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `*결정 ${index + 1}*\n${decision.decision}`
+        }
+      });
+      
+      blocks.push({
+        "type": "context",
+        "elements": [
+          {
+            "type": "mrkdwn",
+            "text": `결정자: <@${decision.decisionMaker}> | 배경: ${decision.context}`
+          }
+        ]
+      });
+    });
+
+    return blocks;
+  }
+
+  /**
+   * 의사결정 필요 분석 결과를 Slack 블록으로 포맷팅합니다
+   * @private
+   * @param {Object} analysis - 분석 결과 객체
+   * @returns {Array} - Slack 블록 배열
+   */
+  _formatDecisionNeededBlocks(analysis) {
+    const urgencyEmoji = {
+      high: '🔴',
+      medium: '🟡',
+      low: '🟢'
+    };
+
+    const blocks = [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "⚠️ 의사결정 필요",
+          "emoji": true
+        }
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `*요약*\n${analysis.summary}`
+        }
+      },
+      {
+        "type": "divider"
+      }
+    ];
+
+    // 대기 중인 결정 사항들 추가
+    analysis.pendingDecisions.forEach((pending, index) => {
+      const emoji = urgencyEmoji[pending.urgency] || '⚪';
+      const mentions = pending.suggestedDecisionMakers.map(userId => `<@${userId}>`).join(' ');
+      
+      blocks.push({
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `${emoji} *결정 필요 ${index + 1}*\n${pending.issue}`
+        }
+      });
+      
+      blocks.push({
+        "type": "context",
+        "elements": [
+          {
+            "type": "mrkdwn",
+            "text": `우선순위: ${pending.urgency.toUpperCase()} | 제안 결정자: ${mentions}`
+          }
+        ]
+      });
+      
+      if (pending.context) {
+        blocks.push({
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": `*상황:* ${pending.context}`
+          }
+        });
+      }
+    });
+
+    return blocks;
+  }
+
+  /**
+   * 일반 그룹 분석 결과를 Slack 블록으로 포맷팅합니다
+   * @private
+   * @param {Object} analysis - 분석 결과 객체
+   * @returns {Array} - Slack 블록 배열
+   */
+  _formatGeneralGroupBlocks(analysis) {
+    return [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "📊 메시지 그룹 분석",
+          "emoji": true
+        }
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `*요약*\n${analysis.summary}`
+        }
+      },
+      {
+        "type": "context",
+        "elements": [
+          {
+            "type": "mrkdwn",
+            "text": `참여자: ${analysis.participants.map(p => `<@${p}>`).join(', ')}`
+          }
+        ]
+      }
+    ];
+  }
 }
 
 module.exports = new SlackService(); 
